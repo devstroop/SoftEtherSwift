@@ -1,0 +1,98 @@
+# Xcode
+# Build generated
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode Patch
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcworkspace/contents.xcworkspacedata
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+# CocoaPods
+Pods/
+*.podspec
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Code Injection
+iOSInjectionProject/
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Zig build artifacts
+.zig-cache/
+zig-out/
+SoftEtherClient/.zig-cache/
+SoftEtherClient/zig-out/
+
+# XCFramework binaries (can be rebuilt)
+ZigFramework/SoftEtherClient.xcframework/
+ZigFramework/SoftEtherVPN.xcframework/
+ZigFramework/OpenSSL.xcframework/
+ZigFramework/OpenSSLCrypto.xcframework/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbnails
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.*.sw[a-z]
+
+# IDE
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Test artifacts
+*.test
+test_output/
+
+# Sensitive configuration (keep config.example.json)
+config.json
+*.xcconfig
+.env
