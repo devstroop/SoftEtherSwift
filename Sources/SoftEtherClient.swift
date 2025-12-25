@@ -2,7 +2,7 @@
 // Using NIOTransportServices (Network.framework) for iOS sandbox compatibility
 
 import Foundation
-import NIOCore
+@preconcurrency import NIOCore
 import NIOTransportServices
 import Crypto
 import Network
@@ -131,7 +131,7 @@ public protocol SoftEtherClientDelegate: AnyObject {
 
 /// SoftEther VPN Client using NIOTransportServices (Network.framework)
 /// Uses Apple's Network.framework for iOS sandbox compatibility
-public class SoftEtherClient {
+public final class SoftEtherClient: @unchecked Sendable {
     
     private let config: VPNConfiguration
     private let eventLoopGroup: NIOTSEventLoopGroup
@@ -498,8 +498,11 @@ public class SoftEtherClient {
         
         let decoder = TunnelFrameDecoder()
         do {
-            try await currentChannel.pipeline.addHandler(ByteToMessageHandler(decoder), name: "tunnelDecoder").get()
-            try await currentChannel.pipeline.addHandler(TunnelDataHandler(client: self), name: "tunnelHandler").get()
+            // Add handlers synchronously on the channel's event loop to avoid Sendable warnings
+            try await currentChannel.eventLoop.submit { [self] in
+                try currentChannel.pipeline.syncOperations.addHandler(ByteToMessageHandler(decoder), name: "tunnelDecoder")
+                try currentChannel.pipeline.syncOperations.addHandler(TunnelDataHandler(client: self), name: "tunnelHandler")
+            }.get()
             os_log(.default, log: seLog, "Added tunnel handlers")
         } catch {
             os_log(.error, log: seLog, "Failed to add tunnel handlers: %{public}s", error.localizedDescription)

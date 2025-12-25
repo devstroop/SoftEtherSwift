@@ -34,7 +34,7 @@ public enum TunnelFrameType {
 /// - For keep-alive:
 ///   - [4 bytes] keep_alive_size
 ///   - [N bytes] random data
-public final class TunnelFrameDecoder: ByteToMessageDecoder {
+public final class TunnelFrameDecoder: ByteToMessageDecoder, @unchecked Sendable {
     public typealias InboundOut = TunnelFrameType
     
     private enum State {
