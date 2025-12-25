@@ -530,7 +530,7 @@ public final class SoftEtherClient: @unchecked Sendable {
     /// Handle cluster server redirect
     private func handleClusterRedirect(redirect: RedirectInfo, hello: HelloResponse) async throws -> AuthResult {
         // Log redirect info - IP is stored as a 32-bit integer where the bytes directly represent the IP octets
-        // Use memory layout (like Zig's @bitCast) to extract bytes correctly
+        // Use memory layout to extract bytes correctly
         let ipValue = redirect.ip
         let ipBytes = withUnsafeBytes(of: ipValue) { Array($0) }
         let redirectIPv4 = "\(ipBytes[0]).\(ipBytes[1]).\(ipBytes[2]).\(ipBytes[3])"
@@ -792,7 +792,7 @@ public final class SoftEtherClient: @unchecked Sendable {
     }
     
     private func uploadSignature(channel: Channel) async throws {
-        // Send "VPNCONNECT" signature (matching Zig implementation)
+        // Send "VPNCONNECT" signature
         // The official SoftEther client can use either the WaterMark GIF or "VPNCONNECT" string
         let signature = Data("VPNCONNECT".utf8)
         
@@ -857,7 +857,7 @@ public final class SoftEtherClient: @unchecked Sendable {
             throw error
         }
         
-        // Check for error field (like Zig does)
+        // Check for error field
         if let errorCode = pack.getInt("error"), errorCode != 0 {
             os_log(.error, log: seLog, "Server error in Pack: %{public}u", errorCode)
             throw SoftEtherError.serverError(Int(errorCode))
@@ -980,7 +980,7 @@ public final class SoftEtherClient: @unchecked Sendable {
         // Cedar->UniqueId is SEPARATE from unique_id in C
         let cedarUniqueId = SoftEtherAuth.randomBytes(count: 20)
         
-        // Add NodeInfo fields (required by server) - matching Zig implementation
+        // Add NodeInfo fields (required by server)
         pack.addStr("ClientProductName", SoftEtherProtocol.clientString)
         pack.addStr("ServerProductName", "")
         pack.addStr("ClientOsName", "iOS")

@@ -50,18 +50,6 @@ iOSInjectionProject/
 .swiftpm/
 Package.resolved
 
-# Zig build artifacts
-.zig-cache/
-zig-out/
-SoftEtherClient/.zig-cache/
-SoftEtherClient/zig-out/
-
-# XCFramework binaries (can be rebuilt)
-ZigFramework/SoftEtherClient.xcframework/
-ZigFramework/SoftEtherVPN.xcframework/
-ZigFramework/OpenSSL.xcframework/
-ZigFramework/OpenSSLCrypto.xcframework/
-
 # macOS
 .DS_Store
 .AppleDouble

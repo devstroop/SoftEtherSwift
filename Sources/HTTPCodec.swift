@@ -30,7 +30,7 @@ public struct HTTPRequest {
         self.body = body
     }
     
-    /// Build HTTP/1.1 request bytes (matching Zig implementation headers)
+    /// Build HTTP/1.1 request bytes
     public func toData(host: String) -> Data {
         var lines = ["\(method) \(path) HTTP/1.1"]
         

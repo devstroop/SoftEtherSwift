@@ -10,8 +10,7 @@ public enum SoftEtherAuth {
     /// Generate password hash for SoftEther authentication
     /// Uses SHA-0 (not SHA-1!) for legacy compatibility with SoftEther
     ///
-    /// The algorithm (from Zig auth.zig):
-    /// password_hash = SHA0(password + UPPERCASE(username))
+    /// Algorithm: password_hash = SHA0(password + UPPERCASE(username))
     ///
     public static func hashPassword(password: String, username: String) -> [UInt8] {
         // SHA0(password + UPPERCASE(username))
@@ -27,8 +26,7 @@ public enum SoftEtherAuth {
     
     /// Compute secure password from password hash and server random
     /// 
-    /// Algorithm (from Zig auth.zig):
-    /// secure_password = SHA0(password_hash + server_random)
+    /// Algorithm: secure_password = SHA0(password_hash + server_random)
     ///
     public static func computeSecurePassword(
         passwordHash: [UInt8],

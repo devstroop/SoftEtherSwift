@@ -420,7 +420,7 @@ public enum PackError: Error, LocalizedError {
     }
 }
 
-/// Pack constants (matching SoftEther/Zig implementation)
+/// Pack constants (matching SoftEther protocol)
 public enum PackConstants {
     public static let maxValueSize = 96 * 1024 * 1024  // 96 MB
     public static let maxValueNum = 65536
