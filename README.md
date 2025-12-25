@@ -149,7 +149,10 @@ SoftEtherSwift/
 │   └── Exports.swift           # Module exports
 ├── Tests/
 │   └── SoftEtherClientTests.swift
+├── Examples/
+│   └── ExamplePacketTunnelProvider.swift  # Reference iOS integration
 ├── Package.swift
+├── LICENSE
 └── README.md
 ```
 
