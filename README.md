@@ -1,4 +1,4 @@
-# SoftEtherClient - Swift VPN Client
+# SoftEtherSwift
 
 A pure Swift implementation of the SoftEther VPN protocol, using SwiftNIO for event-driven I/O.
 
