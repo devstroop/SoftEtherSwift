@@ -12,6 +12,37 @@ import os.log
 // Public logger for debugging
 private let seLog = OSLog(subsystem: "com.worxvpn.softether", category: "client")
 
+/// Log level for SoftEther logging
+public enum SoftEtherLogLevel {
+    case debug
+    case info
+    case error
+}
+
+/// Logging callback type for external log handling
+/// Parameters: (message: String, level: SoftEtherLogLevel)
+public typealias SoftEtherLogHandler = (String, SoftEtherLogLevel) -> Void
+
+/// Global log handler that external code can set to receive logs
+/// This allows PacketTunnelProvider to forward logs to App Group storage
+public var softEtherLogHandler: SoftEtherLogHandler?
+
+/// Internal helper to log to both os.log and external handler
+private func seLogMessage(_ message: String, level: SoftEtherLogLevel = .info) {
+    // Always log to os.log
+    switch level {
+    case .debug:
+        os_log(.debug, log: seLog, "%{public}s", message)
+    case .info:
+        os_log(.default, log: seLog, "%{public}s", message)
+    case .error:
+        os_log(.error, log: seLog, "%{public}s", message)
+    }
+    
+    // Also call external handler if set
+    softEtherLogHandler?(message, level)
+}
+
 /// Client connection state
 public enum ConnectionState: CustomStringConvertible {
     case disconnected
@@ -224,7 +255,7 @@ public final class SoftEtherClient: @unchecked Sendable {
         defer { if result != nil { freeaddrinfo(result) } }
         
         guard status == 0, let addrInfo = result else {
-            os_log(.default, log: seLog, "getaddrinfo failed for %{public}s: %{public}d", ipv4String, status)
+            seLogMessage("getaddrinfo failed for \(ipv4String): \(status)", level: .error)
             return ipv4String
         }
         
@@ -249,7 +280,7 @@ public final class SoftEtherClient: @unchecked Sendable {
         }
         
         if let ipv6 = ipv6Found {
-            os_log(.default, log: seLog, "NAT64 synthesized %{public}s -> %{public}s", ipv4String, ipv6)
+            seLogMessage("NAT64 synthesized \(ipv4String) -> \(ipv6)")
             return ipv6
         }
         
@@ -300,7 +331,7 @@ public final class SoftEtherClient: @unchecked Sendable {
             
             // Track the initial server IP (resolve hostname to IP for route exclusion)
             actualConnectedIP = resolveHostToIPv4(config.host) ?? config.host
-            os_log(.default, log: seLog, "Connected, actualConnectedIP=%{public}s", actualConnectedIP)
+            seLogMessage("Connected to \(actualConnectedIP)")
             
             state = .handshaking
             
@@ -395,18 +426,18 @@ public final class SoftEtherClient: @unchecked Sendable {
             throw SoftEtherError.notConnected
         }
         
-        os_log(.default, log: seLog, "Step 1: Uploading signature...")
+        seLogMessage("Step 1: Uploading signature...")
         
         // Step 1: Upload signature (POST to /vpnsvc/connect.cgi)
         // This triggers the server to send back the Hello response
         do {
             try await uploadSignature(channel: channel)
         } catch {
-            os_log(.error, log: seLog, "uploadSignature failed: %{public}s", error.localizedDescription)
+            seLogMessage("uploadSignature failed: \(error.localizedDescription)", level: .error)
             throw error
         }
         
-        os_log(.default, log: seLog, "Signature uploaded, waiting for Hello response...")
+        seLogMessage("Signature uploaded, waiting for Hello...")
         
         // Step 2: Download Hello (get server random)
         // The server responds to the signature with the Hello Pack
@@ -414,48 +445,48 @@ public final class SoftEtherClient: @unchecked Sendable {
         do {
             helloResponse = try await waitForHTTPResponse()
         } catch {
-            os_log(.error, log: seLog, "waitForHTTPResponse (Hello) failed: %{public}s", error.localizedDescription)
+            seLogMessage("waitForHTTPResponse (Hello) failed: \(error.localizedDescription)", level: .error)
             throw error
         }
-        os_log(.default, log: seLog, "Hello response received: HTTP %{public}d, body %{public}d bytes", helloResponse.statusCode, helloResponse.body.count)
+        seLogMessage("Hello response received: HTTP \(helloResponse.statusCode)")
         guard helloResponse.isSuccess else {
             throw SoftEtherError.serverError(helloResponse.statusCode)
         }
         
-        os_log(.default, log: seLog, "Parsing Hello response...")
+        seLogMessage("Parsing Hello response...")
         let hello: HelloResponse
         do {
             hello = try parseHelloResponse(helloResponse)
         } catch {
-            os_log(.error, log: seLog, "parseHelloResponse failed: %{public}s", error.localizedDescription)
+            seLogMessage("parseHelloResponse failed: \(error.localizedDescription)", level: .error)
             throw error
         }
         serverRandom = hello.random
-        os_log(.default, log: seLog, "Hello parsed: version=%{public}u, build=%{public}u, random=%{public}d bytes", hello.serverVersion, hello.serverBuild, hello.random.count)
+        seLogMessage("Server: v\(hello.serverVersion) build \(hello.serverBuild)")
         
         // Reset HTTP reader for next request
         httpResponseReader.reset()
         
         // Step 3: Upload authentication (POST to /vpnsvc/vpn.cgi)
         state = .authenticating
-        os_log(.default, log: seLog, "Step 3: Uploading authentication...")
+        seLogMessage("Step 3: Authenticating...")
         do {
             try await uploadAuth(channel: channel, serverRandom: hello.random)
         } catch {
-            os_log(.error, log: seLog, "uploadAuth failed: %{public}s", error.localizedDescription)
+            seLogMessage("uploadAuth failed: \(error.localizedDescription)", level: .error)
             throw error
         }
         
-        os_log(.default, log: seLog, "Auth uploaded, waiting for response...")
+        seLogMessage("Auth uploaded, waiting for response...")
         // Step 4: Get auth response
         let authResponse: HTTPResponse
         do {
             authResponse = try await waitForHTTPResponse()
         } catch {
-            os_log(.error, log: seLog, "waitForHTTPResponse (Auth) failed: %{public}s", error.localizedDescription)
+            seLogMessage("waitForHTTPResponse (Auth) failed: \(error.localizedDescription)", level: .error)
             throw error
         }
-        os_log(.default, log: seLog, "Auth response: HTTP %{public}d, body %{public}d bytes", authResponse.statusCode, authResponse.body.count)
+        seLogMessage("Auth response: HTTP \(authResponse.statusCode)")
         guard authResponse.isSuccess else {
             throw SoftEtherError.authenticationFailed("HTTP \(authResponse.statusCode)")
         }
@@ -479,20 +510,20 @@ public final class SoftEtherClient: @unchecked Sendable {
         arpHandler = ARPHandler(mac: macAddress)
         
         // Get the current channel (may have changed due to redirect)
-        os_log(.default, log: seLog, "Checking channel after auth: channel=%{public}s", self.channel != nil ? "SET" : "NIL")
+        seLogMessage("Channel state: \(self.channel != nil ? "active" : "nil")", level: .debug)
         guard let currentChannel = self.channel else {
-            os_log(.error, log: seLog, "Channel is nil after successful auth!")
+            seLogMessage("Channel is nil after auth!", level: .error)
             throw SoftEtherError.notConnected
         }
         
-        os_log(.default, log: seLog, "Channel isActive=%{public}s", currentChannel.isActive ? "YES" : "NO")
+        seLogMessage("Channel active: \(currentChannel.isActive)", level: .debug)
         
         // Remove raw data handler and add tunnel handlers
         do {
             try await currentChannel.pipeline.removeHandler(name: "rawData").get()
-            os_log(.default, log: seLog, "Removed rawData handler")
+            seLogMessage("Removed rawData handler", level: .debug)
         } catch {
-            os_log(.error, log: seLog, "Failed to remove rawData handler: %{public}s", error.localizedDescription)
+            seLogMessage("Failed to remove rawData handler: \(error.localizedDescription)", level: .error)
             throw error
         }
         
@@ -503,9 +534,9 @@ public final class SoftEtherClient: @unchecked Sendable {
                 try currentChannel.pipeline.syncOperations.addHandler(ByteToMessageHandler(decoder), name: "tunnelDecoder")
                 try currentChannel.pipeline.syncOperations.addHandler(TunnelDataHandler(client: self), name: "tunnelHandler")
             }.get()
-            os_log(.default, log: seLog, "Added tunnel handlers")
+            seLogMessage("Tunnel handlers added", level: .debug)
         } catch {
-            os_log(.error, log: seLog, "Failed to add tunnel handlers: %{public}s", error.localizedDescription)
+            seLogMessage("Failed to add tunnel handlers: \(error.localizedDescription)", level: .error)
             throw error
         }
         
@@ -524,7 +555,7 @@ public final class SoftEtherClient: @unchecked Sendable {
             dnsServers: [dhcpClient?.config.dns1 ?? 0, dhcpClient?.config.dns2 ?? 0].filter { $0 != 0 },
             connectedServerIP: actualConnectedIP
         )
-        os_log(.default, log: seLog, "Session info created with connectedServerIP=%{public}s", actualConnectedIP)
+        seLogMessage("Session established")
     }
     
     /// Handle cluster server redirect
@@ -534,15 +565,15 @@ public final class SoftEtherClient: @unchecked Sendable {
         let ipValue = redirect.ip
         let ipBytes = withUnsafeBytes(of: ipValue) { Array($0) }
         let redirectIPv4 = "\(ipBytes[0]).\(ipBytes[1]).\(ipBytes[2]).\(ipBytes[3])"
-        os_log(.default, log: seLog, "Cluster redirect to %{public}s:%{public}d (raw IP: 0x%{public}08x)", redirectIPv4, redirect.port, ipValue)
+        seLogMessage("Cluster redirect to \(redirectIPv4):\(redirect.port)")
         
         // Log ticket for debugging
         let ticketHex = redirect.ticket.map { String(format: "%02x", $0) }.joined()
-        os_log(.default, log: seLog, "Redirect ticket: %{public}s", ticketHex)
+        seLogMessage("Redirect ticket: \(ticketHex)", level: .debug)
         
         // CRITICAL: Send empty pack to acknowledge redirect before disconnecting
         // This tells the controller we received the redirect info
-        os_log(.default, log: seLog, "Sending redirect acknowledgment...")
+        seLogMessage("Sending redirect acknowledgment...")
         if let channel = self.channel {
             let emptyPack = Pack()
             let ackData = emptyPack.toData()
@@ -590,8 +621,7 @@ public final class SoftEtherClient: @unchecked Sendable {
             let isRedirect = index == 0
             let port = isRedirect ? Int(redirect.port) : config.port
             
-            os_log(.default, log: seLog, "Connecting to %{public}s server: %{public}s:%{public}d",
-                   isRedirect ? "redirect" : "original", host, port)
+            seLogMessage("Connecting to \(isRedirect ? "redirect" : "original") server: \(host):\(port)")
             
             do {
                 var bootstrap = NIOTSConnectionBootstrap(group: eventLoopGroup)
@@ -621,7 +651,7 @@ public final class SoftEtherClient: @unchecked Sendable {
                 self.channel = try await bootstrap.connect(host: host, port: port).get()
                 // Track the actual connected IP for route exclusion
                 self.actualConnectedIP = host
-                os_log(.default, log: seLog, "Redirect channel assigned: %{public}s, actualConnectedIP=%{public}s", self.channel != nil ? "SET" : "NIL", host)
+                seLogMessage("Redirect channel assigned to \(host)", level: .debug)
                 
                 guard let newChannel = self.channel else {
                     throw SoftEtherError.connectionFailed
@@ -651,12 +681,12 @@ public final class SoftEtherClient: @unchecked Sendable {
                     throw SoftEtherError.authenticationFailed("HTTP \(authResponse.statusCode)")
                 }
                 
-                os_log(.default, log: seLog, "Successfully connected to %{public}s server", isRedirect ? "redirect" : "original")
-                os_log(.default, log: seLog, "handleClusterRedirect returning, channel=%{public}s", self.channel != nil ? "SET" : "NIL")
+                seLogMessage("Connected to \(isRedirect ? "redirect" : "original") server")
+                seLogMessage("handleClusterRedirect complete", level: .debug)
                 return try parseAuthResponse(authResponse)
                 
             } catch {
-                os_log(.error, log: seLog, "Failed to connect to %{public}s: %{public}s", host, error.localizedDescription)
+                seLogMessage("Failed to connect to \(host): \(error.localizedDescription)", level: .error)
                 lastError = error
                 
                 // Clean up before trying next host
@@ -1037,19 +1067,10 @@ public final class SoftEtherClient: @unchecked Sendable {
     
     private func computeSecurePassword(serverRandom: [UInt8]) -> Data {
         // Decode base64 password hash
-        os_log(.default, log: seLog, "computeSecurePassword: passwordHash base64 length=%{public}d", config.passwordHash.count)
-        
         guard let hashData = Data(base64Encoded: config.passwordHash) else {
-            os_log(.error, log: seLog, "Failed to decode base64 password hash")
+            seLogMessage("Failed to decode base64 password hash", level: .error)
             return Data(repeating: 0, count: 20)
         }
-        
-        os_log(.default, log: seLog, "Password hash bytes: %{public}d", hashData.count)
-        let hashHex = hashData.map { String(format: "%02x", $0) }.joined()
-        os_log(.default, log: seLog, "Password hash: %{public}s", hashHex)
-        
-        let serverRandomHex = serverRandom.map { String(format: "%02x", $0) }.joined()
-        os_log(.default, log: seLog, "Server random: %{public}s", serverRandomHex)
         
         // secure_password = SHA0(password_hash + server_random)
         // SoftEther uses SHA-0, not SHA-1!
@@ -1058,21 +1079,18 @@ public final class SoftEtherClient: @unchecked Sendable {
             serverRandom: serverRandom
         )
         
-        let secureHex = securePass.map { String(format: "%02x", $0) }.joined()
-        os_log(.default, log: seLog, "Secure password: %{public}s", secureHex)
-        
         return Data(securePass)
     }
     
     private func performDHCP() async throws {
         guard let dhcpClient = dhcpClient, let channel = self.channel else { return }
         
-        os_log(.default, log: seLog, "Starting DHCP...")
+        seLogMessage("Starting DHCP...")
         
         // Send DHCP Discover
         let discover = dhcpClient.buildDiscover()
         try sendPacketInternal(discover, channel: channel)
-        os_log(.default, log: seLog, "DHCP DISCOVER sent")
+        seLogMessage("DHCP DISCOVER sent", level: .debug)
         
         // Wait for DHCP to complete (with timeout)
         let timeout = DispatchTime.now() + .seconds(10)
@@ -1082,13 +1100,13 @@ public final class SoftEtherClient: @unchecked Sendable {
         }
         
         guard dhcpClient.config.isValid else {
-            os_log(.error, log: seLog, "DHCP failed - no valid config received")
+            seLogMessage("DHCP failed - no valid config received", level: .error)
             throw SoftEtherError.dhcpFailed
         }
         
         // Configure ARP handler with obtained IP
         let config = dhcpClient.config
-        os_log(.default, log: seLog, "DHCP complete: IP=%{public}@", formatIP(config.ipAddress))
+        seLogMessage("DHCP complete: IP=\(formatIP(config.ipAddress))")
         arpHandler?.configure(myIP: config.ipAddress, gatewayIP: config.gateway)
         
         // Send gratuitous ARP
@@ -1110,12 +1128,12 @@ public final class SoftEtherClient: @unchecked Sendable {
     // MARK: - HTTP Response Handling
     
     private func waitForHTTPResponse() async throws -> HTTPResponse {
-        os_log(.default, log: seLog, "waitForHTTPResponse: starting...")
+        seLogMessage("Waiting for HTTP response...", level: .debug)
         
         // Simple wait without timeout for now - timeout was causing issues
         // The channel inactive handler will signal error if connection drops
         let response = try await httpResponseReader.waitForResponse()
-        os_log(.default, log: seLog, "waitForHTTPResponse: got response")
+        seLogMessage("HTTP response received", level: .debug)
         return response
     }
     
@@ -1177,34 +1195,28 @@ public final class SoftEtherClient: @unchecked Sendable {
     
     private func handleDHCPResponse(_ data: Data) {
         guard let dhcpClient = dhcpClient, let channel = self.channel else { 
-            os_log(.error, log: seLog, "handleDHCPResponse: no dhcpClient or channel!")
+            seLogMessage("handleDHCPResponse: no dhcpClient or channel!", level: .error)
             return 
         }
-        
-        os_log(.default, log: seLog, "handleDHCPResponse: processing %{public}d bytes, state=%{public}@", 
-               data.count, String(describing: dhcpClient.state))
         
         // Pass the full Ethernet frame directly - processResponse expects full frame
         if dhcpClient.processResponse(data) {
             // DHCP completed
-            os_log(.default, log: seLog, "DHCP completed! state=%{public}@", String(describing: dhcpClient.state))
+            seLogMessage("DHCP completed", level: .debug)
         } else if dhcpClient.state == .discoverSent {
             // Got offer, send request - use sendPacketInternal since we're not in .connected state yet
-            os_log(.default, log: seLog, "DHCP OFFER received, sending REQUEST...")
+            seLogMessage("DHCP OFFER received, sending REQUEST...", level: .debug)
             let request = dhcpClient.buildRequest()
             if !request.isEmpty {
-                os_log(.default, log: seLog, "Sending DHCP REQUEST (%{public}d bytes)", request.count)
                 do {
                     try sendPacketInternal(request, channel: channel)
-                    os_log(.default, log: seLog, "DHCP REQUEST sent successfully")
+                    seLogMessage("DHCP REQUEST sent", level: .debug)
                 } catch {
-                    os_log(.error, log: seLog, "Failed to send DHCP REQUEST: %{public}@", error.localizedDescription)
+                    seLogMessage("Failed to send DHCP REQUEST: \(error.localizedDescription)", level: .error)
                 }
             } else {
-                os_log(.error, log: seLog, "buildRequest returned empty!")
+                seLogMessage("buildRequest returned empty!", level: .error)
             }
-        } else {
-            os_log(.default, log: seLog, "DHCP processResponse returned false, state=%{public}@", String(describing: dhcpClient.state))
         }
     }
 }
