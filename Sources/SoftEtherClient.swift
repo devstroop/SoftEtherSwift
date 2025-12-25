@@ -45,6 +45,8 @@ public struct SessionInfo {
     public let subnetMask: UInt32
     public let gatewayIP: UInt32
     public let dnsServers: [UInt32]
+    /// The actual IP address we're connected to (may differ from initial host after redirect)
+    public let connectedServerIP: String
     
     public init(
         sessionKey: Data = Data(),
@@ -54,7 +56,8 @@ public struct SessionInfo {
         assignedIP: UInt32 = 0,
         subnetMask: UInt32 = 0,
         gatewayIP: UInt32 = 0,
-        dnsServers: [UInt32] = []
+        dnsServers: [UInt32] = [],
+        connectedServerIP: String = ""
     ) {
         self.sessionKey = sessionKey
         self.serverVersion = serverVersion
@@ -64,6 +67,7 @@ public struct SessionInfo {
         self.subnetMask = subnetMask
         self.gatewayIP = gatewayIP
         self.dnsServers = dnsServers
+        self.connectedServerIP = connectedServerIP
     }
 }
 
@@ -149,6 +153,9 @@ public class SoftEtherClient {
     private var sessionKey: Data?
     private var sessionInfo: SessionInfo?
     
+    /// The actual IP address we're connected to (after any redirect)
+    private var actualConnectedIP: String = ""
+    
     // HTTP response handling (thread-safe via locks)
     fileprivate let httpResponseReader = HTTPResponseReader()
     
@@ -178,6 +185,32 @@ public class SoftEtherClient {
     }
     
     // MARK: - Network Helpers
+    
+    /// Resolve hostname to IPv4 address string
+    private func resolveHostToIPv4(_ host: String) -> String? {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET  // IPv4 only
+        hints.ai_socktype = SOCK_STREAM
+        
+        var result: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(host, nil, &hints, &result)
+        defer { if result != nil { freeaddrinfo(result) } }
+        
+        guard status == 0, let addrInfo = result else {
+            return nil
+        }
+        
+        if let sockaddr = addrInfo.pointee.ai_addr {
+            var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            let addr4 = sockaddr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0 }
+            var sin_addr = addr4.pointee.sin_addr
+            if inet_ntop(AF_INET, &sin_addr, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil {
+                return String(cString: buffer)
+            }
+        }
+        
+        return nil
+    }
     
     /// Resolve IPv4 address to IPv6 if on NAT64 network
     /// iOS synthesizes IPv6 addresses for IPv4-only hosts using NAT64
@@ -264,6 +297,10 @@ public class SoftEtherClient {
             }
             
             channel = try await bootstrap.connect(host: config.host, port: config.port).get()
+            
+            // Track the initial server IP (resolve hostname to IP for route exclusion)
+            actualConnectedIP = resolveHostToIPv4(config.host) ?? config.host
+            os_log(.default, log: seLog, "Connected, actualConnectedIP=%{public}s", actualConnectedIP)
             
             state = .handshaking
             
@@ -472,7 +509,7 @@ public class SoftEtherClient {
         // Perform DHCP to get IP
         try await performDHCP()
         
-        // Create session info
+        // Create session info (includes actual connected IP for route exclusion)
         sessionInfo = SessionInfo(
             sessionKey: sessionKey ?? Data(),
             serverVersion: hello.serverVersion,
@@ -481,8 +518,10 @@ public class SoftEtherClient {
             assignedIP: dhcpClient?.config.ipAddress ?? 0,
             subnetMask: dhcpClient?.config.subnetMask ?? 0,
             gatewayIP: dhcpClient?.config.gateway ?? 0,
-            dnsServers: [dhcpClient?.config.dns1 ?? 0, dhcpClient?.config.dns2 ?? 0].filter { $0 != 0 }
+            dnsServers: [dhcpClient?.config.dns1 ?? 0, dhcpClient?.config.dns2 ?? 0].filter { $0 != 0 },
+            connectedServerIP: actualConnectedIP
         )
+        os_log(.default, log: seLog, "Session info created with connectedServerIP=%{public}s", actualConnectedIP)
     }
     
     /// Handle cluster server redirect
@@ -577,7 +616,9 @@ public class SoftEtherClient {
                 }
                 
                 self.channel = try await bootstrap.connect(host: host, port: port).get()
-                os_log(.default, log: seLog, "Redirect channel assigned: %{public}s", self.channel != nil ? "SET" : "NIL")
+                // Track the actual connected IP for route exclusion
+                self.actualConnectedIP = host
+                os_log(.default, log: seLog, "Redirect channel assigned: %{public}s, actualConnectedIP=%{public}s", self.channel != nil ? "SET" : "NIL", host)
                 
                 guard let newChannel = self.channel else {
                     throw SoftEtherError.connectionFailed
@@ -1084,30 +1125,19 @@ public class SoftEtherClient {
     // MARK: - Data Handling
     
     fileprivate func handleTunnelData(_ data: Data) {
-        // Check for keep-alive response
-        if data.count == 0 {
-            return
-        }
+        // Fast path - minimal checks
+        if data.count < 14 { return }
         
-        // Check EtherType
-        guard data.count >= 14 else { 
-            os_log(.default, log: seLog, "handleTunnelData: packet too small (%{public}d bytes)", data.count)
-            return 
-        }
         let etherType = UInt16(data[12]) << 8 | UInt16(data[13])
-        os_log(.default, log: seLog, "handleTunnelData: etherType=0x%{public}04x, size=%{public}d", etherType, data.count)
         
         switch etherType {
-        case 0x0800: // IPv4
+        case 0x0800: // IPv4 - fast path
             // Check if this is a DHCP response (UDP port 68)
             if data.count >= 42 {
                 let ipProtocol = data[23]
                 if ipProtocol == 17 { // UDP
-                    let srcPort = UInt16(data[34]) << 8 | UInt16(data[35])
                     let dstPort = UInt16(data[36]) << 8 | UInt16(data[37])
-                    os_log(.default, log: seLog, "  IPv4 UDP: srcPort=%{public}d dstPort=%{public}d", srcPort, dstPort)
                     if dstPort == 68 {
-                        os_log(.default, log: seLog, "  DHCP response detected!")
                         handleDHCPResponse(data)
                         return
                     }
@@ -1239,7 +1269,7 @@ private class RawDataHandler: ChannelInboundHandler, RemovableChannelHandler {
 }
 
 /// NIO Handler for tunnel data
-private class TunnelDataHandler: ChannelInboundHandler {
+private final class TunnelDataHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = TunnelFrameType
     
     private weak var client: SoftEtherClient?
@@ -1253,13 +1283,12 @@ private class TunnelDataHandler: ChannelInboundHandler {
         
         switch frame {
         case .data(let blocks):
-            os_log(.default, log: seLog, "TunnelDataHandler received %{public}d data blocks", blocks.count)
+            // Fast path - no logging for data packets
             for block in blocks {
-                os_log(.default, log: seLog, "  Block size: %{public}d bytes", block.count)
                 client?.handleTunnelData(block)
             }
-        case .keepalive(let size):
-            os_log(.default, log: seLog, "TunnelDataHandler received keepalive (size=%{public}d)", size)
+        case .keepalive:
+            // Keepalives are silent
             break
         }
     }

@@ -276,23 +276,34 @@ public final class HTTPResponseReader: @unchecked Sendable {
     
     public init() {}
     
+    /// Synchronously access state under lock
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+    
     /// Wait for an HTTP response (call from async context)
     public func waitForResponse() async throws -> HTTPResponse {
         // Check if we already have a response buffered
-        lock.lock()
-        if let response = pendingResponse {
-            pendingResponse = nil
-            lock.unlock()
-            return response
+        let buffered: (response: HTTPResponse?, error: Error?) = withLock {
+            if let response = pendingResponse {
+                pendingResponse = nil
+                return (response, nil)
+            }
+            if let error = pendingError {
+                pendingError = nil
+                return (nil, error)
+            }
+            return (nil, nil)
         }
         
-        // Check if we have a pending error
-        if let error = pendingError {
-            pendingError = nil
-            lock.unlock()
+        if let response = buffered.response {
+            return response
+        }
+        if let error = buffered.error {
             throw error
         }
-        lock.unlock()
         
         // Wait for data to arrive
         return try await withCheckedThrowingContinuation { cont in

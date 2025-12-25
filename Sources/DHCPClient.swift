@@ -117,7 +117,7 @@ public class DHCPClient {
         
         // Calculate IP checksum
         let ipStart = 14
-        var checksum = calculateIPChecksum(Array(packet[ipStart..<ipStart+20]))
+        let checksum = calculateIPChecksum(Array(packet[ipStart..<ipStart+20]))
         packet[ipStart + 10] = UInt8((checksum >> 8) & 0xFF)
         packet[ipStart + 11] = UInt8(checksum & 0xFF)
         
